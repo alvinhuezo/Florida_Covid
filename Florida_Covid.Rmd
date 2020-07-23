@@ -1,0 +1,451 @@
+---
+title: "The Major Factors Minority Groups Face in Florida Concerning COVID-19"
+author: "Alvin Huezo"
+date: "6/7/2020"
+output:
+    rmdformats::readthedown:
+    highlight: kate
+    code_folding: "hide"
+    number_sections: TRUE
+  
+---
+
+```{r setup,include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(kableExtra)
+library(stargazer)
+library(knitr)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(gridExtra)
+#library(prettydoc)
+library(readr)
+library(tidyverse)
+library(rayshader) #3d models of ggplots
+library(sf)
+library(maps)
+library(rnaturalearth)
+library(rnaturalearthdata)
+#library(rgeos)
+library(tm)
+#library(fuzzyjoin)
+library(tibble)
+library(av)
+library(ggrepel)
+library(ggthemes)
+library(gridExtra) #grid.arrange()
+#library(SparkR)  #initcap()
+library(rmdformats)
+```
+
+
+
+
+<center>
+
+![](https://media.giphy.com/media/jtzVIPNLqNgi8Si74n/giphy.gif)
+
+</center>
+
+***
+
+## Motivation
+
+The initial aim of this project was to examine the amount of COVID-19 cases in each county in Florida. I decided to create this project for one underlying purpose; to use the `rayshader` package in R and create 3D models of my ggplot graphs. I also wanted to get more experience with geospatial analysis and decided that focusing on COVID-19 data and the state that I live in would provide great practice for experimenting with the `sf`, `maps`, and `rnaturalearth` packages.
+
+However, after completing the primary objectives of this project, I wanted to do go beyond visualizations and perform some analysis on my data with other external datasets. Researching the ongoing pandemic, I collected various articles that stated COVID-19 as a discriminatory virus and decided that I would add upon this project by creating regression models of 3 categories identified by the CDC to determine how various factors explain the amount of COVID-19 cases and can be viewed as discriminatory. I will also attempt to answer which of these categories (explained below) contribute the most to the number of COVID-19 cases in the state of Florida. The independent demographic variables are gathered from the Census Bureau and due to the scope of my project, these variabels will only be in correlation with the state of Florida and the counties within it.
+
+
+The main article that I will be analysing in this project is published by the Center for Disease Control and Prevention. [This article](https://www.cdc.gov/coronavirus/2019-ncov/need-extra-precautions/racial-ethnic-minorities.html) introduces information about the disproportion of those with COVID-19 and how minority groups carry a heavier count. An excerpt from the article states,
+
+>"A recent CDC MMWR report included race and ethnicity data from 580 patients hospitalized with lab-confirmed COVID-19 found that 45% of individuals for whom race or ethnicity data was available were white, compared to 59% of individuals in the surrounding community. However, 33% of hospitalized patients were black, compared to 18% in the community, and 8% were Hispanic, compared to 14% in the community. These data suggest an overrepresentation of blacks among hospitalized patients. Among COVID-19 deaths for which race and ethnicity data were available, New York City identified death rates among black/African American persons (92.3 deaths per 100,000 population) and Hispanic/Latino persons (74.3) that were substantially higher than that of white (45.2) or Asian (34.5) persons."
+
+This excerpt exemplifies the disproportion between minority groups and whites in the amount of those hospitalized from COVID-19. 
+
+The article goes further to provide some factors that may explain the disproportion (which I will be analysing and how it pertains exclusively to the state of Florida). The three main categories that these factors fall in include "Living Conditions," "Work Circumstances," and "Underlying Health Conditions and Lower Access to Care." The article concludes by providing some solutions to the needs of vunerable populations during the pandemic.
+ 
+***
+
+## Data Manipulationa and Data Cleaning
+
+Although most of the data manipulation/cleaning was performed in R, minor edits were made utilizing PostgreSQL and Excel before importing the datasets into the global enviornment.
+
+```{r, message=FALSE,warning=FALSE}
+data<-read_csv("C:/Users/alvin/Desktop/EconometricsLAB/us-counties.csv")
+
+
+florida<-data %>% filter(state=="Florida") %>% filter(date=="2020-06-05") %>% arrange(desc(cases)) 
+
+
+#current # of cases as of date in florida
+
+florida <- florida[-c(50), ]
+#removes the Unknown column and matches the amount of counties in the "counties" table
+
+
+topfive<-data %>% filter(state=="Florida") %>% filter(county==c("Miami-Dade","Broward","Palm Beach","Hillsborough","Orange"))
+
+census<-read_csv("C:/Users/alvin/Desktop/EconometricsLAB/Quickfacts2.csv")
+
+#census <- census %>%   # Switched columns with rows to be able to perform inner_join with flcases dataset
+  #gather("county", "value", 2:ncol(census)) %>%
+  #spread(Fact, value)
+
+```
+
+```{r, message=FALSE,warning=FALSE}
+#world <- ne_countries(scale = "medium", returnclass = "sf")
+
+counties <- st_as_sf(map("county", plot = FALSE, fill = TRUE))
+counties <- subset(counties, grepl("florida", counties$ID))
+counties$area <- as.numeric(st_area(counties))
+
+names(counties)[1] <- "county" 
+counties$county<- as.character(counties$county) #inner_join on character type
+
+#stopwords = readLines('C:/Users/alvin/Desktop/EconometricsLAB/stopwords.txt')     # stop words file
+#typeof(counties$county)
+#counties$county<- removeWords(counties$county,stopwords)     #Remove stopwords that were preventing me from using a join function
+counties$county<-substring(counties$county,9,100)
+
+counties$county<-toupper(counties$county)
+florida$county<-toupper(florida$county)
+census$Geographic_Area<-(toupper(census$Geographic_Area))
+names(census)[1] <- "county" 
+
+# regular inner join does not work due to case sensitivity, instead use the fuzzyjoin package
+flcases<-inner_join(counties,florida, by= c("county","county")) 
+
+#later learned you can avoid using fuzzyjoin package if you use the toupper() function on the counties dataset to make the letters of each word uppercase, after using the substr() function to keep the name of the counties and ommiting the "florida," section without using stopwords and readLines() function.
+
+
+flcovidcensus<-left_join(census,florida,  by=c("county","county"))
+
+
+```
+
+
+***
+## Cases in Florida Counties
+
+```{r,fig.width=12,fig.height=12,warning=FALSE,echo=FALSE,fig.cap="Based on the visual above, there seems to be some sort of correlation between the number of COVID-19 cases and the total population for each county in Florida. Logically, the higher the population , the higher the chance of interactions and contamination, thus higher cases of COVID-19",fig.align="center"}
+
+flcasestb<-cbind(florida$county , florida$cases)
+kable(flcasestb[order(-florida$cases),],caption = "List of Most Cases in Florida by County")  %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center") %>%
+    kable_styling(bootstrap_options = "condensed") %>%
+    kable_styling(bootstrap_options = "bordered") %>%
+    scroll_box(width = "800px", height = "400px")  
+   
+
+florida$id <- seq(1, nrow(florida))
+
+
+label_fl=florida
+number_of_bar=nrow(label_fl)
+angle= 90 - 360 * (label_fl$id-0.5) /number_of_bar     # I substract 0.5 because the letter must have the angle of the center of the bars. Not extreme right(1) or extreme left (0)
+label_fl$hjust<-ifelse( angle < -90, 1, 0)
+label_fl$angle<-ifelse(angle < -90, angle+180, angle)
+label_fl$title <- paste(label_fl$county, " (", label_fl$cases,")", sep="")
+
+
+case1<-ggplot(florida, aes(x=as.factor(id), y=cases)) +       # Note that id is a factor. If x is numeric, there is some space between the first bar
+  geom_bar(stat="identity", fill=alpha("darkred", 0.8)) +
+  ylim(-7800,90000) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = unit(rep(-15,1000), "in") 
+  ) +
+  coord_polar(start = 0) + 
+  geom_text(data=label_fl, aes(x=id, y=cases+300, label=county ), color="black", fontface="bold",alpha=0.9, size=2.9, angle= label_fl$angle, hjust=label_fl$hjust, inherit.aes = FALSE ) +
+  geom_text( aes(x=34, y=8000, label="Number of Cases in Florida Counties"), color="black", inherit.aes = FALSE)
+
+
+
+flcovidcensus$Total_pop<-flcovidcensus$Total_pop/100
+flcovidcensus<-arrange(flcovidcensus,desc(cases) )
+
+flcovidcensus$id <- seq(1, nrow(florida))
+
+
+
+label_flc=flcovidcensus
+number_of_bar=nrow(label_flc)
+angle= 90 - 360 * (label_flc$id-0.5) /number_of_bar     # I substract 0.5 because the letter must have the angle of the center of the bars. Not extreme right(1) or extreme left (0)
+label_flc$hjust<-ifelse( angle < -90, 1, 0)
+label_flc$angle<-ifelse(angle < -90, angle+180, angle)
+label_flc$title <- paste(label_flc$county, " (", label_flc$Total_pop,")", sep="")
+
+
+case2<-ggplot(flcovidcensus, aes(x=as.factor(id), y=(Total_pop))) +       # Note that id is a factor. If x is numeric, there is some space between the first bar
+  geom_bar(stat="identity", fill=alpha("darkblue", 0.8)) +
+  ylim(-7800,90000) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = unit(rep(-15,1000), "in") 
+  ) +
+  coord_polar(start = 0) + 
+  geom_text(data=label_flc, aes(x=id, y=Total_pop+100, label=county ), color="black", fontface="bold",alpha=0.9, size=2.9, angle= label_flc$angle, hjust=label_flc$hjust, inherit.aes = FALSE ) +
+  geom_text( aes(x=34, y=8000, label="Population in Florida Counties Ordered by Number of Cases"), color="black", inherit.aes = FALSE)
+
+
+
+grid.arrange(case1,case2,nrow=1)
+```
+
+
+
+
+$~$
+$~$
+
+***
+
+## Visualizing COVID-19 Cases for Florida Counties in 3D
+
+```{r, message=FALSE,warning=FALSE,echo=FALSE,fig.cap="Given the visual 3D geodata model and the top-down view of the 2D graph, the counties with the highest COVID-19 cases tend to be focused at the most Southeastern part of Florida. If there is indeed a correlation between COVID-19 cases and minority groups, This focus can be attributed to the migration of minorities from many diverse ethnic countries that lie to the southeast of Florida including, Cuba, Jamaica, Haiti, Puerto Rico, etc..."}
+
+
+plot2<-ggplot(data = flcases, aes(geometry = geom,fill=cases)) +
+    geom_sf()+ scale_fill_gradient(low = "lightgreen", high = "darkgreen") #I used a scale_fill function because the original plot                                                                             resulted in a lighter color shade for the most # of                                                                               cases, which can be visually confusing.
+
+plot2
+
+
+
+#plot2_3d<-plot_gg(plot2, width = 4 ,height=2, fov = 10,zoom = .45) 
+#plot_gg is part of the rayshader package that allows me to turn 2d ggplots into 3d ggplots. I removed the code after running it because the graph itself will not show up in the HTML file after knitting. 
+
+#rayshader::render_snapshot(clear = FALSE)
+
+
+#render_snapshot("plot2_3d.mp4", frames = 480)
+#this code allows for the video view of the 3d graph and once I saved the vid as an mp4 file in my computer, I turned it into a gif using giphy.com so that I could add it into my HTML file, since I do not know how to embed local videos into r markdown.
+
+
+
+
+
+```
+
+
+![](plot2_3dpic.png)
+
+$~$
+
+
+***
+
+
+## Top 5 Counties
+
+```{r,message=FALSE, fig.width=13,warning=FALSE,echo=FALSE}
+#tutorial from https://www.r-spatial.org/r/2018/10/25/ggplot2-sf-2.html
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+#coord_sf(xlim = c(-88, -78), ylim = c(24.5, 31.2), expand = FALSE)  #these coordinates limits the map and focuses on florida
+
+
+
+
+flcities <- data.frame(state = rep("Florida", 5), city = c("Miami-Dade",    
+    "Broward", "Palm Beach", "Hillsborough", "Orange"), lat = c(25.7616798, 
+    26.1901, 26.7056, 27.9904, 28.4845), lng = c(-80.1917902, 
+    -80.3659, -80.0364, -82.3018, -81.2519))
+
+plot<-ggplot(data = world) +
+    geom_sf() +
+    geom_sf(data = counties, fill = NA, color = gray(.5)) + geom_text_repel(data = flcities, aes(x = lng, y = lat, label = city), 
+        fontface = "bold", nudge_x = c(1, -1.5, 2, 2.5, -1.9), nudge_y = c(-.25, 
+            -0.25, 0.4, 0.5, -1.2)) +
+    coord_sf(xlim = c(-88, -78), ylim = c(24.5, 31.2), expand = FALSE)+ggtitle("Top 5 Counties with COVID-19 Cases")
+par(mfrow=c(1,2))
+
+
+topfive<-data %>% filter(state =="Florida") %>% filter(county==c("Miami-Dade","Broward","Palm Beach","Hillsborough","Orange"))
+
+plot5<-ggplot(data = topfive, aes(x=date,y=cases,col=county))+geom_line(size = 1.02)+xlab("Date")+ggtitle("COVID-19 Cases for 5 Florida Counties\n March 5th - June 5th 2020") +ylab("Number of Cases")+geom_point()+ theme_hc() + theme(legend.title = element_blank())
+
+grid.arrange(plot, plot5, ncol=2)
+
+```
+
+These 5 counties in Florida have the most cases as to date, but they are not all that similar to one another. There are two interesting takeaways from the graph above:
+
+1. Each of these counties have varying progression of cases over time, whereas Hillsborough had a gradual increase over time, Miami-Dade had an exponential increase in cases around April. What led to the exponential increase in cases that is not found in other counties?
+
+2. Although Palm Beach, Orange, and Hillsborough share similar population size,there an evident higher case count in Palm Beach compared to the other two counties. This may inform us that there is indeed other factors than total population that may lead to being diagnosed with COVID-19.
+
+
+
+
+
+***
+
+
+## Correlation Between COVID-19 & Racial/Ethnic Minority Groups
+
+Before I begin testing diffrent factors that can affect the risk of being infected with COVID-19, I want to determine if there is even a correlation between COVID-19 and racial/ethnic minority groups or if my earlier 3D model can be explained by the difference in population for each county. To do this, I collected Census Bureau demographics data for all counties in Florida and instead of collecting the data for minority groups (which would result in many different columns representing the vast variety of minority groups), I collected the data for those who identify as both white and only one race. This excludes people who may be white but are 2 or more races. 
+
+```{r, message=FALSE,warning=FALSE,echo=FALSE}
+
+whitepop<-read_csv("C:/Users/alvin/Desktop/EconometricsLAB/whitepop.csv")
+whitepop$county<-toupper(whitepop$county)
+flcovidcensus<-left_join(flcovidcensus,whitepop,by=c("county"))
+
+
+ggplot(data = flcovidcensus,aes(Pop_White,cases))+geom_point(shape = 21, colour = "black", fill="white", size = 4,stroke=1.2)+geom_smooth(method = "lm",se=F)+theme_bw()+xlab("Total Population for White Race Only")+ylab("Number of Cases") +ggtitle("COVID-19 Cases vs Total White Population")+theme(legend.position = "none")
+
+ggplot(data = flcovidcensus,aes(Percent_White,cases))+geom_point(shape = 21, colour = "black", fill="white", size = 4,stroke=1.2)+geom_smooth(method = "lm",se=F,col="red")+theme_bw()+xlab("Percentage of Population That is White")+ylab("Number of Cases") +ggtitle("COVID-19 Cases vs White Population Percentage")
+
+```
+
+At first it seems that our data contradicts the Center for Disease Control and Prevention's (CDC) article and that it is in fact the case that there may be a positive correlation between COVID-19 cases and white floridians. However, after creating a similar empirical graph and using the percentage of white floridians, it seems that there is indeed a negative correlation between COVID-19 and white floridians. The first graph was misleading due to higher populations logically having higher number of cases (As we saw in the circular barplot). If we are to examine how COVID-19 affects racial/ethnic minority groups, then we must examine the population as a percentage to fully understand the impact COVID-19 has on diffrent race groups.
+
+Since there is indeed a positive correlation between minority groups and COVID-19, we will examine various quantitative factors that the CDC has outlined that may be the reason for the correlation.
+
+***
+
+## Graphs and Regression Modeling for Each Factor Category{.tabset .tabset-fade .tabset-pills}
+
+>Health differences between racial and ethnic groups are often due to economic and social conditions that are more common among some racial and ethnic minorities than whites. In public health emergencies, these conditions can also isolate people from the resources they need to prepare for and respond to outbreaks
+
+### Living Conditions
+
+>**Multi-generational households**, which may be more common among some racial and ethnic minority families, may find it difficult to take precautions to protect older family members or isolate those who are sick, if space in the household is limited.
+
+
+>Racial and ethnic minority groups are **over-represented in jails, prisons, and detention centers**, which have specific risks due to congregate living, shared food service, and more.
+
+$$ Number_of_Cases = \beta_0+\beta_1*Multigenerational_Households +\beta_2*Correctional_Facilities+u$$
+
+```{r, message=FALSE,warning=FALSE,echo=FALSE}
+ggplot(data = flcovidcensus,aes(Households_sixty,cases))+geom_point(size=2)+theme_bw()+xlab("Number of Households (with at least one 60 Year Old Occupant)")+ylab("Number of Cases") +ggtitle("COVID-19 Cases vs Multi-Generational Households")
+
+ggplot(data = flcovidcensus,aes(Correctional_facilities,cases))+geom_point(size=2)+theme_bw()+xlab("Number of Correctional Facilities")+ylab("Number of Cases") +ggtitle("COVID-19 Cases vs Number of Jails, Prisons, and Detention Centers")
+
+m1<-lm(cases~Households_sixty+Correctional_facilities,data = flcovidcensus)
+
+summary(m1)
+```
+
+### Work Circumstances
+
+>**Critical workers**: The risk of infection may be greater for **workers in essential industries** who continue to work outside the home despite outbreaks in their communities, including some people who may need to continue working in these jobs because of their economic circumstances.
+Nearly a quarter of employed Hispanic and black or African American workers are employed in service industry jobs compared to 16% of non-Hispanic whites.
+Hispanic workers account for 17% of total employment but constitute 53% of agricultural workers; black or African Americans make up 12% of all employed workers but account for 30% of licensed practical and licensed vocational nurses.
+
+Since the Census Bureau gives information about both firms and establishment, I decided to go with establishments in this analysis because of how the Census Bureau defines an [establishment](https://www.census.gov/programs-surveys/susb/about/glossary.html).
+
+
+
+$$ Number_of_Cases = \beta_0+\beta_1*Essential_Industries+u$$
+
+```{r, message=FALSE,warning=FALSE,echo=FALSE}
+
+
+
+
+
+
+essent<-read_csv("C:/Users/alvin/Desktop/EconometricsLAB/essent.csv")
+essent$county<-toupper(essent$county)
+flcovidcensus<-left_join(flcovidcensus,essent,by=c("county"))
+
+
+ggplot(data = flcovidcensus,aes(establishment,cases))+geom_point(size=2)+theme_bw()+xlab("Number of Establishments")+ylab("Number of Cases") +ggtitle("COVID-19 Cases vs Essential Industries")
+
+m2<-lm(cases~establishment,data = flcovidcensus)
+summary(m2)
+
+
+```
+
+### Underlying Health Conditions and Lower Access to Care
+>**Not having health insurance**: Compared to whites, Hispanics are almost three times as likely to be uninsured, and African Americans are almost twice as likely to be uninsured. In all age groups, blacks are more likely than whites to report not being able to see a doctor in the past year because of cost.
+Inadequate access is also driven by a long-standing distrust of the health care system, language barriers, and financial implications associated with missing work to receive care.
+
+$$ Number_of_Cases = \beta_0+\beta_1*Uninsured+u$$
+
+```{r, message=FALSE,warning=FALSE,echo=FALSE}
+Uninsuredhc<-read_csv("C:/Users/alvin/Desktop/EconometricsLAB/hi.csv")
+Uninsuredhc$county<-toupper(Uninsuredhc$county)
+flcovidcensus<-left_join(flcovidcensus,Uninsuredhc,by=c("county"))
+
+
+ggplot(data = flcovidcensus,aes(Uninsured,cases))+geom_point(size=2)+theme_bw()+xlab("Number of People Uninsured")+ylab("Number of Cases") +ggtitle("COVID-19 Cases vs Lack of Health Insurance")
+
+
+
+m3<-lm(cases~Uninsured,data = flcovidcensus)
+
+summary(m3)
+```
+
+
+### All Categories Combined
+
+$$Number_of_Cases = \beta_0+\beta_1*Multigenerational_Households + \beta_2*Correctional_Facilities+
+\beta_3*Essential_Industries+\beta_4*Uninsured+u $$
+```{r, message=FALSE,warning=FALSE,echo=FALSE}
+
+m4<-lm(cases~Households_sixty+Correctional_facilities+establishment+Uninsured,data = flcovidcensus)
+
+summary(m4)
+
+```
+
+
+***
+
+
+
+## Conclusion
+
+Before I analyzed the factors that cause the disproportion of COVID-19 cases between whites and minority groups, I analzed the correlation between populations and COVID-19 to quell any doubt the correlation could be found in the population size and that many minority groups tend to live in populated cities and counties. However, after my analysis, I can undeniably conclude that **COVID-19 does discriminate.**
+
+Overall, with all the independent variables analyzed, about 88% of COVID-19 cases can be explained by the number of multigenerational households, correctional facilities, essential industries, and amount of people without health insurance. The CDC has succesfully outline correlated variables that increase cases of COVID-19 and have a vital impact in vunerable racial/ethnic minority goups in Florida. Going by the different categories, "Underlying Health Conditions and Lower Access to Care" showed the greatest positive correlation with COVID-19 cases.
+
+Some imprvements that can implemented in the future to improve the accuracy of my analysis would include swapping outdated/2020 estimate data from the Census Bureau and instead incorporate the actual 2020 data. I am currrently unable to do so seeing as that particular data is currently being collected.
+
+An important note concerning the findings is that although I have independent variables from each factor category, there are still many other factors that either could not be quantified or could not be recorded in the Census data. This includes data for residential segregation which would fall under the Living Conditions category. Other factors that I could not collect for the analysis include: paid sick leave, underlying medical conditions, stigma and systemic inequalities, and population density for each county. If more info does become available, then I will update the markdown file in its github respository.
+
+Concerning any improvements code-wise, I will potentially update the html file with an updated circular barplot that is one stacked plot instead of two distinct graphs to better view the proportion between number of cases and county population.
+
+
+***
+
+## Works Cited
+https://www.kaggle.com/fireballbyedimyrnmom/us-counties-covid-19-dataset 
+
+
+https://www.r-spatial.org/r/2018/10/25/ggplot2-sf-2.html  
+
+
+https://www.r-graph-gallery.com/296-add-labels-to-circular-barplot.html  
+
+
+https://www.florida-demographics.com/counties_by_population  
+
+
+https://www.cdc.gov/coronavirus/2019-ncov/need-extra-precautions/racial-ethnic-minorities.html
+
+https://www.apa.org/news/press/op-eds/covid-19-discriminate-vulnerable
+
+https://www.census.gov/quickfacts/FL
+
+
+https://data.census.gov/cedsci/
+
+
+http://edr.state.fl.us/Content/population-demographics/data/index-floridaproducts.cfm
+
+https://www.cisa.gov/identifying-critical-infrastructure-during-covid-19
